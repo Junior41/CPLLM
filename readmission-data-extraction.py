@@ -4,18 +4,20 @@ from pyhealth.datasets import eICUDataset  # pip install pyhealth is required.
 import pickle
 from pyhealth.datasets import split_by_patient
 
-OUTPUT_DIR = '/sise/nadav-group/nadavrap-group/ofir/pyhealth_data/readmission'
+OUTPUT_DIR = '../../../nfs/home/ajbrandao/cpllm/eicu-crd/physionet.org/files/eicu-crd/2.0/readmission'
 
 # For MIMIC: Please refer to the PyHealth documentation.
 # If you need assistance, feel free to open an issue at https://github.com/nadavlab/CPLLM/issues.
+# carrega o dataset e aplica mapeamento de códigos médicos para categorias padronizadas
 eicu_crd_ds = eICUDataset(
-    root="/home/benshoho/storage/eicu_crd/physionet.org/files/eicu-crd/2.0",
+    root="../../../nfs/home/ajbrandao/cpllm/eicu-crd/physionet.org/files/eicu-crd/2.0",
     tables=["diagnosis", "medication", "physicalExam"],
     code_mapping={"ICD9CM": "CCSCM", "ICD10CM": "CCSCM", "ICD9PROC": "CCSPROC", "ICD10PROC": "CCSPROC", "NDC": "ATC"},
 )
 
 print(eicu_crd_ds.stat())
 
+# define tarefa de readmissão hospitalar
 from pyhealth.tasks import mortality_prediction_mimic4_fn, readmission_prediction_mimic4_fn, \
     readmission_prediction_eicu_fn, readmission_prediction_eicu_fn2, mortality_prediction_eicu_fn
 
@@ -25,6 +27,9 @@ print(eicu_crd_task_ds.stat())
 
 
 def convert(code, code_to_descriptions_dict, added_dict):
+    '''
+    Converte um código médico em sua descrição correspondente, utilizando dicionários de mapeamento.
+    '''
     if code in added_dict:
         return added_dict[code]
     try:
@@ -34,6 +39,9 @@ def convert(code, code_to_descriptions_dict, added_dict):
 
 
 def from_codes_to_descriptions(task_dataset_with_codes):
+    '''
+    Converte códigos médicos em descrições legíveis para todo o dataset da tarefa.
+    '''
     task_dataset_with_descriptions = []
     durgs_dict = InnerMap.load("ATC", refresh_cache=True)
     procedors_ccs_dict = InnerMap.load("CCSPROC", refresh_cache=True)
@@ -57,6 +65,9 @@ def from_codes_to_descriptions(task_dataset_with_codes):
 
 
 def write_dataset_to_pickle(ds, ds_name, output_dir):
+    '''
+    Converte códigos médicos em descrições legíveis para todo o dataset da tarefa.
+    '''
     descriptions_ds = from_codes_to_descriptions(ds)
     print(ds_name, " with descriptions: ", len(descriptions_ds))
     with open(f'{output_dir}/eicu_crd_readmission_prediction_with_descriptions_{ds_name}.pickle', 'wb') as fp2:

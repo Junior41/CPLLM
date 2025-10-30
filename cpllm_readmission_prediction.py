@@ -6,12 +6,14 @@ from peft import LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_tr
 from sklearn.metrics import precision_recall_fscore_support, accuracy_score, auc, precision_recall_curve
 from transformers import TrainingArguments, AutoConfig, \
     AutoModelForSequenceClassification, AutoTokenizer, BitsAndBytesConfig, DataCollatorWithPadding, Trainer
+from transformers.integrations import WandbCallback
 import numpy as np
 from datasets import Dataset
+import wandb
 
 EPOCHS = 4
 MAX_LENGTH = 2048
-OUTPUT_DIR = "/tmp/pycharm_project_410/"
+OUTPUT_DIR = "../../../nfs/home/ajbrandao/cpllm/results/eicu_crd/readmission"
 NUM_LABELS = 2
 MODEL_ID = "meta-llama/Llama-2-13b-hf"
 
@@ -28,9 +30,18 @@ MODEL_ID = "meta-llama/Llama-2-13b-hf"
 #             "FAMOTIDINE 20 MG/2 ML SDV INJ"]],
 #  "label": 1}
 
-train_pickle_file_path = '/sise/nadav-group/nadavrap-group/ofir/pyhealth_data/readmission/eicu_crd_readmission_prediction_with_descriptions_train.pickle'
-validation_pickle_file_path = '/sise/nadav-group/nadavrap-group/ofir/pyhealth_data/readmission/eicu_crd_readmission_prediction_with_descriptions_validation.pickle'
-test_pickle_file_path = '/sise/nadav-group/nadavrap-group/ofir/pyhealth_data/readmission/eicu_crd_readmission_prediction_with_descriptions_test.pickle'
+train_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/eicu-crd/physionet.org/files/eicu-crd/2.0/readmission/eicu_crd_readmission_prediction_with_descriptions_train.pickle'
+validation_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/eicu-crd/physionet.org/files/eicu-crd/2.0/readmission/eicu_crd_readmission_prediction_with_descriptions_validation.pickle'
+test_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/eicu-crd/physionet.org/files/eicu-crd/2.0/readmission/eicu_crd_readmission_prediction_with_descriptions_test.pickle'
+
+# Configuração para Quantização em 4 bits
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4", # Tipo de quantização: NormalFloat 4 (NF4)
+    bnb_4bit_compute_dtype=torch.bfloat16, # Tipo de dado para computação (BFloat16 é recomendado para modelos Llama)
+    bnb_4bit_use_double_quant=True # Usar quantização dupla para economizar mais memória
+)
+
 
 
 def print_trainable_parameters(model):
@@ -60,12 +71,15 @@ config = LoraConfig(
     task_type=TaskType.SEQ_CLS
 )
 
-model = AutoModelForSequenceClassification.from_pretrained(MODEL_ID,
-                                                           config=AutoConfig.from_pretrained(MODEL_ID,
-                                                                                             trust_remote_code=True,
-                                                                                             num_labels=NUM_LABELS),
-                                                           trust_remote_code=True,
-                                                           load_in_8bit=True).bfloat16()
+model = AutoModelForSequenceClassification.from_pretrained(
+    MODEL_ID,
+    config=AutoConfig.from_pretrained(MODEL_ID,
+                                      trust_remote_code=True,
+                                      num_labels=NUM_LABELS),
+    trust_remote_code=True,
+    quantization_config=bnb_config # Passa a configuração de quantização em 4 bits
+)
+
 print(model)
 model.gradient_checkpointing_enable()
 model = prepare_model_for_kbit_training(model)  # TODO: RETURN IT BACK FOR Q.
@@ -259,6 +273,18 @@ training_args = TrainingArguments(
     dataloader_num_workers=8,
 )
 
+wandb.init(
+    project="CPLLM",  # substitua pelo nome do seu projeto no W&B
+    name="experimento-readmission",  # nome opcional para o run
+    config={
+        "epochs": EPOCHS,
+        "model": MODEL_ID,
+        "max_length": MAX_LENGTH,
+        "batch_size": training_args.per_device_train_batch_size,
+        "learning_rate": training_args.learning_rate,
+    }
+)
+
 model.config.use_cache = False  # silence the warnings. Please re-enable for inference!
 trainer = Trainer(
     model=model,
@@ -266,13 +292,16 @@ trainer = Trainer(
     train_dataset=lm_train_dataset,
     eval_dataset=lm_validation_dataset,
     compute_metrics=compute_metrics,
-    data_collator=DataCollatorWithPadding(tokenizer=tokenizer)
+    data_collator=DataCollatorWithPadding(tokenizer=tokenizer),
+    callbacks=[WandbCallback]
 )
 
 trainer.train()
 trainer.save_model(OUTPUT_DIR)
 
 test_results = trainer.evaluate(eval_dataset=lm_test_dataset)
+
+wandb.log(test_results)
 
 print(f'test_results= {test_results}')
 print(f'see outputs in= {OUTPUT_DIR}')
