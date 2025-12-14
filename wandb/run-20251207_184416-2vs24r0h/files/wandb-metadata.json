@@ -1,0 +1,40 @@
+{
+  "os":  "Linux-6.17.4-76061704-generic-x86_64-with-glibc2.35",
+  "python":  "CPython 3.10.19",
+  "startedAt":  "2025-12-07T21:44:16.203631Z",
+  "program":  "/home/ajbrandao/CPLLM/cpllm_readmission_prediction.py",
+  "codePath":  "cpllm_readmission_prediction.py",
+  "codePathLocal":  "cpllm_readmission_prediction.py",
+  "git":  {
+    "remote":  "git@github.com:Junior41/CPLLM.git",
+    "commit":  "810721c353ac3986d51da9c0d36bf339d6781671"
+  },
+  "email":  "ailton.brandao@usp.br",
+  "root":  "/home/ajbrandao/CPLLM",
+  "host":  "pop-os",
+  "executable":  "/home/ajbrandao/miniconda3/envs/cpllm-env/bin/python",
+  "cpu_count":  48,
+  "cpu_count_logical":  96,
+  "gpu":  "NVIDIA A100-SXM4-40GB",
+  "gpu_count":  1,
+  "disk":  {
+    "/":  {
+      "total":  "887199645696",
+      "used":  "827341361152"
+    }
+  },
+  "memory":  {
+    "total":  "540639850496"
+  },
+  "gpu_nvidia":  [
+    {
+      "name":  "NVIDIA A100-SXM4-40GB",
+      "memoryTotal":  "42949672960",
+      "cudaCores":  6912,
+      "architecture":  "Ampere",
+      "uuid":  "GPU-b8c50ff6-5085-8b23-ff46-966f6eb40b6d"
+    }
+  ],
+  "cudaVersion":  "13.0",
+  "writerId":  "w8xeniapwwob743jbtir4xf9ir132p3b"
+}
