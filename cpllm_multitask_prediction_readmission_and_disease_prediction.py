@@ -15,16 +15,16 @@ from torch.nn import CrossEntropyLoss
 # --- Configurações Multitask ---
 NUM_LABELS = 4 
 EPOCHS = 4
-MAX_LENGTH = 1024
+MAX_LENGTH = 2048
 # Ajuste o OUTPUT_DIR para o novo nome de pasta (consistente com a preparação de dados)
-OUTPUT_DIR = "../../../nfs/home/ajbrandao/cpllm/outputMultiTaskMIMICReadmissionAnddiseasePrediction"
-MODEL_ID = "stanford-crfm/BioMedLM"
+OUTPUT_DIR = "../../../nfs/home/ajbrandao/cpllm/outputMultiTaskMIMICReadmissionAnddiseasePredictionWithDrugs"
+MODEL_ID = "meta-llama/Llama-2-13b-hf"
 
 # DATA
 # Os caminhos dos arquivos devem ser ajustados para os arquivos gerados na etapa anterior
-train_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitask/chronic_kidney_disease_descriptions_train.pickle'
-validation_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitask/chronic_kidney_disease_descriptions_validation.pickle'
-test_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitask/chronic_kidney_disease_descriptions_test.pickle'
+train_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitaskWithDrugs/chronic_kidney_disease_descriptions_train.pickle'
+validation_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitaskWithDrugs/chronic_kidney_disease_descriptions_validation.pickle'
+test_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitaskWithDrugs/chronic_kidney_disease_descriptions_test.pickle'
 
 # Configuração para Quantização em 4 bits
 bnb_config = BitsAndBytesConfig(
@@ -124,46 +124,55 @@ def compute_metrics(p):
         'disease_prediction_precision': prec_rec_f1_disease_prediction[0],
         'disease_prediction_recall': prec_rec_f1_disease_prediction[1],
         'disease_prediction_f1': prec_rec_f1_disease_prediction[2],
-        'disease_prediction_aucpr': aucpr_disease_prediction,
-        'disease_prediction_auroc': auroc_disease_prediction,
+        'disease_prediction_PR-AUC': aucpr_disease_prediction,
+        'isease_prediction_ROC-AUC': auroc_disease_prediction,
         
         'readmission_accuracy': acc_readmission,
         'readmission_precision': prec_rec_f1_readmission[0],
         'readmission_recall': prec_rec_f1_readmission[1],
         'readmission_f1': prec_rec_f1_readmission[2],
-        'readmission_aucpr': aucpr_readmission,
-        'readmission_auroc': auroc_readmission,
+        'readmission_PR-AUC': aucpr_readmission,
+        'readmission_ROC-AUC': auroc_readmission,
         
         # Métrica de seleção do melhor modelo (média das AUC-PR)
         'eval_multitask_aucpr': (aucpr_disease_prediction + aucpr_readmission) / 2.0,
     }
 
 
-# --- Custom Trainer para Loss Multitask ---
+
 class MultitaskTrainer(Trainer):
-    # CORREÇÃO: Adiciona **kwargs para aceitar argumentos extras como 'num_items_in_batch'
-    def compute_loss(self, model, inputs, return_outputs=False, **kwargs): 
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         labels = inputs.pop("labels")
         outputs = model(**inputs)
         logits = outputs.logits
         
-        # Separa os logits por tarefa
-        logits_readmission = logits[:, 0:2]
-        logits_disease_prediction = logits[:, 2:4]
+        current_device = logits.device 
         
-        # Separa os rótulos por tarefa
-        labels_readmission = labels[:, 0]
-        labels_disease_prediction = labels[:, 1]
+        # Pesos baseados na sua distribuição:
+        # Doença (1ª posição): ~24% pos -> peso 3.15
+        # Readmissão (2ª posição): ~15% pos -> peso 5.63
+        weight_disease = torch.tensor([1.0, 3.15]).to(current_device)
+        weight_readmission = torch.tensor([1.0, 5.63]).to(current_device)
         
-        # Loss Function (Cross-Entropy para cada tarefa binária)
-        loss_fct = CrossEntropyLoss()
+        # SEPARAÇÃO CORRIGIDA:
+        # Se label = [doença, readmissão], então:
+        # Logits: colunas 0,1 = doença | colunas 2,3 = readmissão
+        logits_disease = logits[:, 0:2]
+        logits_readmission = logits[:, 2:4]
         
-        # Calcula a loss para cada tarefa
-        loss_readmission = loss_fct(logits_readmission, labels_readmission.long())
-        loss_disease_prediction = loss_fct(logits_disease_prediction, labels_disease_prediction.long())
+        # Labels: coluna 0 = doença | coluna 1 = readmissão
+        labels_disease = labels[:, 0].long()
+        labels_readmission = labels[:, 1].long()
         
-        # Loss Multitask: Soma das losses (pode ser ponderada se necessário)
-        loss = loss_readmission + loss_disease_prediction
+        # Funções de perda com os pesos corretos para cada tarefa
+        loss_fct_d = CrossEntropyLoss(weight=weight_disease)
+        loss_fct_r = CrossEntropyLoss(weight=weight_readmission)
+        
+        loss_d = loss_fct_d(logits_disease, labels_disease)
+        loss_r = loss_fct_r(logits_readmission, labels_readmission)
+        
+        # Ponderação: Mantemos o peso maior (2.0) na readmissão porque ela é a mais difícil
+        loss = (1.0 * loss_d) + (2.0 * loss_r)
         
         return (loss, outputs) if return_outputs else loss
 
@@ -185,14 +194,25 @@ class MedicalDataset():
         labels_readmission = []
         labels_disease_prediction = []
         diagnoses = []
+        drugs = []
+        procedures = []
 
         for data in all_data:
             patient_ids.append(data[0])
             labels_disease_prediction.append(data[1][0])
             labels_readmission.append(data[1][1])
-            diagnoses_list = data[2]
-            diagnoses.append(diagnoses_list)
+            
+            # Função auxiliar interna para garantir que listas virem strings
+            def to_str(item):
+                if isinstance(item, list):
+                    return ", ".join([str(i) for i in item])
+                return str(item) if item is not None else ""
+
+            # Transformando tudo em string antes de adicionar às listas
+            diagnoses.append(to_str(data[2]))
             visit_ids.append(data[3])
+            drugs.append(to_str(data[4]))
+            procedures.append(to_str(data[6]))
             
         combined_labels = np.array(list(zip(labels_disease_prediction, labels_readmission)))
         
@@ -200,6 +220,8 @@ class MedicalDataset():
             'visit_id': visit_ids,
             'patient_id': patient_ids,
             'diagnoses': diagnoses,
+            'drugs': drugs,
+            'procedures': procedures,
             'labels': combined_labels.tolist() 
         }
 
@@ -222,30 +244,49 @@ test_dataset = Dataset.from_dict(test_dict)
 validation_dataset = Dataset.from_dict(validation_dict)
 
 prompt_template = """
-Your task is to perform a multitask prediction based on the patient's diagnosis descriptions provided below.
+Your task is to perform a multitask prediction based on the patient's diagnosis, procedures, and drugs provided below.
 You must output two labels:
 
 1. **Disease label**: Determine whether the patient is likely to have Chronic Kidney Disease.
 2. **Readmission label**: Determine whether the patient is likely to be readmitted to the hospital.
 
-Each diagnosis description is separated by a comma.
+Each description is separated by a comma.
 
 **Patient Diagnosis Descriptions:**
 
 {diagnoses}
+
+**Patient Drugs Descriptions:**
+
+{drugs}
+
+**Patient Procedures Descriptions:**
+
+{procedures}
 """
 
 
 
 def template_dataset(sample):
     sample["text"] = prompt_template.format(diagnoses=sample["diagnoses"],
+                                            drugs=sample["drugs"],
+                                            procedures=sample["procedures"],
                                             eos_token=tokenizer.eos_token)
     return sample
 
 
 # apply prompt template per sample
 train_dataset = train_dataset.map(template_dataset)
-print(f'example sample from train:\n {train_dataset[0]}')
+print("\n" + "="*100)
+print("VISUALIZAÇÃO DOS 5 PRIMEIROS PROMPTS (CAMPO 'TEXT'):")
+print("="*100)
+
+for i in range(5):
+    print(f"\n--- EXEMPLO {i+1} ---")
+    print(train_dataset[i]["text"])
+    print("-" * 50)
+
+print("="*100 + "\n")
 validation_dataset = validation_dataset.map(template_dataset)
 test_dataset = test_dataset.map(template_dataset)
 

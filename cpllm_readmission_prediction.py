@@ -195,6 +195,7 @@ Each description is separated by a comma.
 """
 
 
+
 def template_dataset(sample):
     sample["text"] = prompt_template.format(diagnoses=sample["conditions"],
                                             drugs=sample["drugs"],
