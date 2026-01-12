@@ -16,12 +16,9 @@ from torch.nn import CrossEntropyLoss
 NUM_LABELS = 4 
 EPOCHS = 4
 MAX_LENGTH = 2048
-# Ajuste o OUTPUT_DIR para o novo nome de pasta (consistente com a preparação de dados)
 OUTPUT_DIR = "../../../nfs/home/ajbrandao/cpllm/outputMultiTaskMIMICReadmissionAnddiseasePredictionWithDrugs"
 MODEL_ID = "meta-llama/Llama-2-13b-hf"
 
-# DATA
-# Os caminhos dos arquivos devem ser ajustados para os arquivos gerados na etapa anterior
 train_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitaskWithDrugs/chronic_kidney_disease_descriptions_train.pickle'
 validation_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitaskWithDrugs/chronic_kidney_disease_descriptions_validation.pickle'
 test_pickle_file_path = '../../../nfs/home/ajbrandao/cpllm/mimiciv/multitaskWithDrugs/chronic_kidney_disease_descriptions_test.pickle'
@@ -62,7 +59,6 @@ config = LoraConfig(
     task_type=TaskType.SEQ_CLS
 )
 
-# O modelo agora é inicializado com 4 rótulos de saída
 model = AutoModelForSequenceClassification.from_pretrained(
     MODEL_ID,
     config=AutoConfig.from_pretrained(MODEL_ID,
@@ -85,9 +81,6 @@ model.resize_token_embeddings(len(tokenizer))
 
 # --- Função de Métrica Multitask ---
 def compute_metrics(p):
-    # p.predictions tem shape (batch_size, 4)
-    # p.label_ids tem shape (batch_size, 2)
-
     # 1. Separa as predições e rótulos por tarefa
     # Predições: [logits_disease_prediction_0, logits_disease_prediction_1, logits_readmission_0, logits_readmission_1]
     logits_disease_prediction = p.predictions[:, 0:2]
@@ -125,7 +118,7 @@ def compute_metrics(p):
         'disease_prediction_recall': prec_rec_f1_disease_prediction[1],
         'disease_prediction_f1': prec_rec_f1_disease_prediction[2],
         'disease_prediction_PR-AUC': aucpr_disease_prediction,
-        'isease_prediction_ROC-AUC': auroc_disease_prediction,
+        'disease_prediction_ROC-AUC': auroc_disease_prediction,
         
         'readmission_accuracy': acc_readmission,
         'readmission_precision': prec_rec_f1_readmission[0],
@@ -154,17 +147,12 @@ class MultitaskTrainer(Trainer):
         weight_disease = torch.tensor([1.0, 3.15]).to(current_device)
         weight_readmission = torch.tensor([1.0, 5.63]).to(current_device)
         
-        # SEPARAÇÃO CORRIGIDA:
-        # Se label = [doença, readmissão], então:
-        # Logits: colunas 0,1 = doença | colunas 2,3 = readmissão
         logits_disease = logits[:, 0:2]
         logits_readmission = logits[:, 2:4]
         
-        # Labels: coluna 0 = doença | coluna 1 = readmissão
         labels_disease = labels[:, 0].long()
         labels_readmission = labels[:, 1].long()
         
-        # Funções de perda com os pesos corretos para cada tarefa
         loss_fct_d = CrossEntropyLoss(weight=weight_disease)
         loss_fct_r = CrossEntropyLoss(weight=weight_readmission)
         
