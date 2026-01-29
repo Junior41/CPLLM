@@ -235,7 +235,7 @@ prompt_template = """
 Your task is to perform a multitask prediction based on the patient's diagnosis, procedures, and drugs provided below.
 You must output two labels:
 
-1. **Disease label**: Determine whether the patient is likely to have Chronic Kidney Disease.
+1. **Disease label**: Determine whether the patient is likely to have Acute and unspecified renal failure.
 2. **Readmission label**: Determine whether the patient is likely to be readmitted to the hospital.
 
 Each description is separated by a comma.
@@ -343,7 +343,7 @@ training_args = TrainingArguments(
 
 wandb.init(
     project="CPLLM",
-    name="experimento-multitask-disease-readmission", # Nome do run ajustado
+    name="experimento-multitask-disease-readmission com prompt corrigido", # Nome do run ajustado
     config={
         "epochs": EPOCHS,
         "model": MODEL_ID,
